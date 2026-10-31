@@ -1,0 +1,20 @@
+diff --git a/src/components/bluepad32/bt/uni_bt_le.c b/src/components/bluepad32/bt/uni_bt_le.c
+index 131f429..c5cfe3f 100644
+--- a/src/components/bluepad32/bt/uni_bt_le.c
++++ b/src/components/bluepad32/bt/uni_bt_le.c
+@@ -635,6 +635,15 @@ static void uni_sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t
+     }
+ 
+     type = hci_event_packet_get_type(packet);
++
++    // ESP32Pageflippy: SM events from LE connections where we are the peripheral
++    // (e.g. a reader connected to our HID keyboard) are handled by the application.
++    if (size >= 4) {
++        hci_con_handle_t handle = little_endian_read_16(packet, 2);
++        if (gap_get_connection_type(handle) == GAP_CONNECTION_LE && gap_get_role(handle) == HCI_ROLE_SLAVE)
++            return;
++    }
++
+     switch (type) {
+         case SM_EVENT_JUST_WORKS_REQUEST:
+             logi("Just works requested\n");

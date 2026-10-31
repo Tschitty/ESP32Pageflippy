@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32Pageflippy</title>
+<style>
+:root{--bg:#f6f6f4;--card:#fff;--ink:#1d1d1b;--muted:#6b6b66;--line:#e2e2dc;--accent:#2f6fde;--ok:#2e8b57;--bad:#c0392b}
+@media (prefers-color-scheme:dark){:root{--bg:#161615;--card:#20201e;--ink:#ececea;--muted:#a3a39c;--line:#34342f;--accent:#6d9cf0;--ok:#58b883;--bad:#e07065}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 16px}
+h2{font-size:16px;margin:0 0 12px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.muted{color:var(--muted);font-size:13px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--bad)}
+.dot.on{background:var(--ok)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+th.c,td.c{text-align:center;width:72px}
+input[type=text],input[type=password],select{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+input[type=checkbox]{width:18px;height:18px}
+label{display:block;margin:10px 0 4px;font-weight:600;font-size:13px}
+button{padding:9px 14px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--bad)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:520px){.grid{grid-template-columns:1fr}}
+#msg{min-height:20px;margin-top:8px}
+#nets{list-style:none;margin:12px 0 0;padding:0}
+#nets li{display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px;cursor:pointer}
+#nets li:hover,#nets li.sel{border-color:var(--accent)}
+#nets .bars{font-family:ui-monospace,monospace;color:var(--muted)}
+#join{display:none;margin-top:12px;padding:12px;border:1px solid var(--accent);border-radius:8px}
+kbd{font-family:ui-monospace,monospace;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 6px}
+</style>
+</head>
+<body>
+<main>
+<h1>ESP32Pageflippy</h1>
+
+<section>
+<h2>Status</h2>
+<div><span id="tdot" class="dot"></span>Tolino: <b id="tolino">…</b></div>
+<div style="margin-top:6px">Controller: <b id="ctrls">…</b></div>
+<div style="margin-top:6px">Letzte Eingabe: <kbd id="last">–</kbd> <span class="muted">(Taste am Controller drücken, um sie hier zu sehen)</span></div>
+<div class="muted" style="margin-top:6px" id="meta"></div>
+<div style="margin-top:6px">Controller-Suche: <b id="pair">…</b></div>
+<div class="row" style="margin-top:12px"><button onclick="act('prev')">◀ Zurück testen</button><button onclick="act('next')">Vor testen ▶</button><button onclick="act('pair')">Neuen Controller koppeln</button></div>
+<p class="muted">Die Suche läuft 60 Sekunden nach dem Start, nach „Neuen Controller koppeln“ oder nach einem Druck auf die BOOT-Taste am ESP32. Während der Suche ist das WLAN langsamer. Ein gekoppelter DualSense verbindet sich auch ohne Suche, eine Fire TV Remote nur während der Suche.</p>
+</section>
+
+<section>
+<h2>Controller-Belegung</h2>
+<table><thead><tr><th>Eingabe</th><th class="c">Vor</th><th class="c">Zurück</th></tr></thead><tbody id="map"></tbody></table>
+<label><input type="checkbox" id="rumble" style="vertical-align:middle"> Controller vibriert beim Umblättern</label>
+<label><input type="checkbox" id="touch" style="vertical-align:middle"> Touch-Tasten am ESP32 (GPIO32 = vor, GPIO33 = zurück)</label>
+<p class="muted">Draht, Alufolie oder Kupferband an GPIO32 und GPIO33 anschließen. Messwert jetzt: <kbd id="tv">–</kbd> (Berührung lässt den Wert deutlich fallen). Ohne Anschluss bitte aus lassen.</p>
+<label for="idle">Controller ausschalten, wenn der Tolino so lange nicht verbunden ist (Minuten, 0 = nie)</label>
+<input type="number" id="idle" min="0" max="600" step="0.5" style="width:120px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit">
+<p class="muted"><b>Direkt am Controller belegen:</b> Steuerkreuz <b>oben</b> halten und eine Taste drücken = diese Taste blättert vor (rechts vibriert 2x). Steuerkreuz <b>unten</b> halten und eine Taste drücken = zurück (links vibriert 2x). <b>R1 + L1 + Kreuz</b> 5 Sekunden halten = Standardbelegung (beide vibrieren 3x).</p>
+</section>
+
+<section>
+<h2>Tastaturen und Fernbedienungen</h2>
+<p class="muted">HID-Codes in Hex, mit Leerzeichen getrennt, höchstens 4. Den Code einer Taste siehst du oben unter „Letzte Eingabe“.</p>
+<div class="grid">
+<div><label for="nk">Vor</label><input type="text" id="nk" placeholder="4F 4E 2C"></div>
+<div><label for="pk">Zurück</label><input type="text" id="pk" placeholder="50 4B"></div>
+</div>
+<h2 style="margin-top:16px">An den Tolino senden</h2>
+<div class="grid">
+<div><label for="on">Vor</label><select id="on"></select></div>
+<div><label for="op">Zurück</label><select id="op"></select></div>
+</div>
+<div class="row" style="margin-top:16px"><button class="primary" onclick="save()">Belegung speichern</button><button onclick="act('defaults',true)">Standard wiederherstellen</button></div>
+<div id="msg" class="muted"></div>
+</section>
+
+<section>
+<h2>WLAN</h2>
+<p class="muted">Der Hotspot <b id="apssid">ESP32Pageflippy</b> ist immer an (http://192.168.4.1). Mit Heim-WLAN ist die Seite zusätzlich unter der IP-Adresse aus dem Status erreichbar.</p>
+<div>Heim-WLAN: <b id="stanow">…</b></div>
+<div class="row" style="margin-top:12px"><button class="primary" id="scanbtn" onclick="scan()">WLANs suchen</button><button id="forgetwifi" onclick="joinWifi('')" style="display:none">Heim-WLAN trennen</button></div>
+<ul id="nets"></ul>
+<div id="join">
+<div>Verbinden mit <b id="jssid"></b></div>
+<div id="jpassbox"><label for="sp">Passwort</label><input type="password" id="sp" autocomplete="off"></div>
+<div class="row" style="margin-top:12px"><button class="primary" onclick="joinWifi($('jssid').textContent)">Verbinden</button><button onclick="$('join').style.display='none'">Abbrechen</button></div>
+<p class="muted">Der ESP32 startet dazu neu. Danach ist die Seite im Heim-WLAN unter der neuen IP-Adresse erreichbar (siehe Router oder hier im Status über den Hotspot).</p>
+</div>
+<details style="margin-top:12px"><summary class="muted">Netz von Hand eintragen / Hotspot-Passwort ändern</summary>
+<div class="grid">
+<div><label for="ss">Heim-WLAN (leer = nur Hotspot)</label><input type="text" id="ss" autocomplete="off"></div>
+<div><label for="sp2">Passwort Heim-WLAN</label><input type="password" id="sp2" placeholder="unverändert"></div>
+<div><label for="ap">Neues Hotspot-Passwort (min. 8 Zeichen)</label><input type="password" id="ap" placeholder="unverändert"></div>
+</div>
+<div class="row" style="margin-top:16px"><button class="primary" onclick="saveWifi()">Speichern und neu starten</button></div>
+</details>
+</section>
+
+<section>
+<h2>Wartung</h2>
+<div class="row"><button class="danger" onclick="if(confirm('Alle Bluetooth-Kopplungen löschen? Controller und Tolino müssen danach neu gekoppelt werden.'))act('forget')">Alle Kopplungen löschen</button><button onclick="act('reboot')">Neu starten</button><button onclick="act('btoff')">Bluetooth bis Neustart aus</button></div>
+<p class="muted">„Bluetooth bis Neustart aus“ trennt Controller und Tolino, damit die Seite schneller reagiert. Seriell geht das auch mit dem Befehl <kbd>bt_off</kbd>.</p>
+</section>
+</main>
+<script>
+const OUT={0x4F:'Pfeil rechts',0x50:'Pfeil links',0x4E:'Bild ab',0x4B:'Bild auf',0x51:'Pfeil runter',0x52:'Pfeil hoch',0x2C:'Leertaste',0x28:'Enter'};
+const $=id=>document.getElementById(id);
+const hex=a=>a.map(v=>v.toString(16).toUpperCase().padStart(2,'0')).join(' ');
+const parseHex=s=>s.split(/[\s,]+/).filter(Boolean).map(v=>parseInt(v,16)).filter(v=>v>0&&v<256).slice(0,4);
+function msg(t){$('msg').textContent=t;setTimeout(()=>{if($('msg').textContent===t)$('msg').textContent=''},4000)}
+function fillOut(sel,val){sel.innerHTML='';let found=false;for(const k in OUT){const o=new Option(OUT[k]+' (0x'+(+k).toString(16).toUpperCase()+')',k);if(+k===val){o.selected=true;found=true}sel.add(o)}if(!found){const o=new Option('0x'+val.toString(16).toUpperCase(),val);o.selected=true;sel.add(o)}}
+async function load(){
+  const c=await (await fetch('/api/config')).json();
+  const tb=$('map');tb.innerHTML='';
+  c.inputs.forEach((name,i)=>{const tr=document.createElement('tr');
+    tr.innerHTML='<td></td><td class="c"><input type="checkbox" data-a="next" data-i="'+i+'"></td><td class="c"><input type="checkbox" data-a="prev" data-i="'+i+'"></td>';
+    tr.firstChild.textContent=name;
+    tr.querySelector('[data-a=next]').checked=c.next.includes(i);
+    tr.querySelector('[data-a=prev]').checked=c.prev.includes(i);
+    tb.appendChild(tr)});
+  $('rumble').checked=c.rumble;$('idle').value=c.idle_off_min;$('touch').checked=c.touch;
+  $('nk').value=hex(c.next_keys);$('pk').value=hex(c.prev_keys);
+  fillOut($('on'),c.out_next);fillOut($('op'),c.out_prev);
+  $('ss').value=c.wifi.sta_ssid;curSsid=c.wifi.sta_ssid;$('forgetwifi').style.display=curSsid?'':'none';$('apssid').textContent=c.wifi.ap_ssid;
+}
+async function save(){
+  const pick=a=>[...document.querySelectorAll('[data-a='+a+']')].filter(e=>e.checked).map(e=>+e.dataset.i);
+  const body={next:pick('next'),prev:pick('prev'),next_keys:parseHex($('nk').value),prev_keys:parseHex($('pk').value),out_next:+$('on').value,out_prev:+$('op').value,rumble:$('rumble').checked,idle_off_min:+$('idle').value||0,touch:$('touch').checked};
+  const r=await fetch('/api/config',{method:'POST',body:JSON.stringify(body)});
+  msg(r.ok?'Gespeichert.':'Speichern fehlgeschlagen.');
+}
+let curSsid='';let cfgRev=null;
+async function saveWifi(){
+  const ap=$('ap').value;if(ap&&ap.length<8){alert('Das Hotspot-Passwort braucht mindestens 8 Zeichen.');return}
+  await fetch('/api/wifi',{method:'POST',body:JSON.stringify({sta_ssid:$('ss').value,sta_pass:$('sp2').value,ap_pass:ap})});
+  alert('Gespeichert. Der ESP32 startet neu.');
+}
+async function joinWifi(ssid){
+  if(!ssid&&!confirm('Heim-WLAN trennen? Danach ist nur noch der Hotspot an.'))return;
+  await fetch('/api/wifi',{method:'POST',body:JSON.stringify({sta_ssid:ssid,sta_pass:$('sp').value})});
+  alert(ssid?'Gespeichert. Der ESP32 startet neu und verbindet sich mit „'+ssid+'“.':'Heim-WLAN getrennt. Der ESP32 startet neu.');
+}
+function bars(r){return r>-55?'▂▄▆█':r>-67?'▂▄▆ ':r>-78?'▂▄  ':'▂   '}
+async function scan(){
+  const b=$('scanbtn');b.disabled=true;b.textContent='Suche läuft …';
+  const ul=$('nets');
+  try{const r=await fetch('/api/scan');if(!r.ok)throw 0;const d=await r.json();
+    ul.innerHTML='';
+    if(!d.networks.length)ul.innerHTML='<li class="muted">Keine WLANs gefunden.</li>';
+    d.networks.forEach(n=>{const li=document.createElement('li');
+      const a=document.createElement('span');a.textContent=(n.secured?'🔒 ':'')+n.ssid+(n.ssid===curSsid?' (eingetragen)':'');
+      const c=document.createElement('span');c.className='bars';c.textContent=bars(n.rssi);c.title=n.rssi+' dBm';
+      li.append(a,c);
+      li.onclick=()=>{[...ul.children].forEach(e=>e.classList.remove('sel'));li.classList.add('sel');
+        $('jssid').textContent=n.ssid;$('sp').value='';$('jpassbox').style.display=n.secured?'':'none';
+        $('join').style.display='block';if(n.secured)$('sp').focus()};
+      ul.appendChild(li)});
+  }catch(e){ul.innerHTML='<li class="muted">Suche fehlgeschlagen, bitte nochmal versuchen.</li>'}
+  b.disabled=false;b.textContent='Erneut suchen';
+}
+async function act(what,reload){
+  const r=await fetch('/api/action?do='+what,{method:'POST'});
+  if(what==='defaults'&&r.ok){await load();msg('Standard wiederhergestellt.')}
+}
+async function poll(){
+  try{const s=await (await fetch('/api/status',{signal:AbortSignal.timeout(8000)})).json();
+    $('tolino').textContent=s.tolino?'verbunden':'nicht verbunden';$('tdot').className='dot'+(s.tolino?' on':'');
+    $('ctrls').textContent=s.controllers.length?s.controllers.join(', '):'keiner';
+    $('last').textContent=s.last_input||'–';
+    $('pair').textContent=s.bt_off?'Bluetooth aus (bis Neustart)':s.pairing_left_s?'aktiv, noch '+s.pairing_left_s+' s':'aus';
+    if(cfgRev===null)cfgRev=s.config_rev;else if(s.config_rev!==cfgRev){cfgRev=s.config_rev;load()}
+    $('tv').textContent=s.touch_next?s.touch_next+' / '+s.touch_prev:'–';
+    $('stanow').textContent=s.sta_ip?curSsid+' (http://'+s.sta_ip+')':(curSsid?curSsid+' (nicht verbunden)':'keins');
+    $('meta').textContent=(s.sta_ip?'Heim-WLAN: http://'+s.sta_ip+' · ':'')+'Umgeblättert: '+s.flips+' · freier Speicher: '+Math.round(s.free_heap/1024)+' KB';
+  }catch(e){}
+  setTimeout(poll,2000);
+}
+load();poll();
+</script>
+</body>
+</html>
