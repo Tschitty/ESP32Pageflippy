@@ -4,7 +4,7 @@
 // it needs to be regenerated when the .gatt file is updated. 
 
 // To generate pageflippy_hog.gatt.h:
-// /tmp/claude-0/-home-claude/92bc5dbb-7e6d-5ff6-ad28-496f8e5f8e73/scratchpad/bluepad32/external/btstack/tool/compile_gatt.py pageflippy_hog.gatt pageflippy_hog.gatt.h
+// external/bluepad32/external/btstack/tool/compile_gatt.py main/pageflippy_hog.gatt main/pageflippy_hog.gatt.h
 
 // att db format version 1
 
