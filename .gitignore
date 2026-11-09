@@ -1,0 +1,8 @@
+firmware/.pio/
+firmware/external/
+firmware/sdkconfig.*
+!firmware/sdkconfig.defaults
+firmware/main/web/*.gz
+
+# Exportierte Einstellungen enthalten evtl. Passwoerter / exported settings may contain passwords
+pageflippy-backup*.json

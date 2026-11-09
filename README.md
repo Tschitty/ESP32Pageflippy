@@ -159,7 +159,7 @@ pio run -e esp32_en        # nur Englisch
 
 Das Komplett-Image liegt unter `.pio/build/esp32_de/firmware.factory.bin` bzw. `esp32_en`, die Update-Datei daneben als `firmware.bin`.
 
-**Releases automatisch bauen:** Der Workflow `.github/workflows/release.yml` baut beide Sprachen und hängt alle vier Dateien an ein Release, sobald du einen Tag wie `v1.0.1` pushst (`git tag v1.0.1 && git push origin v1.0.1`). Die Versionsnummer kommt aus dem Tag. Für lokale Builds steht sie in `firmware/version.txt`.
+**Releases automatisch bauen:** Der Workflow `.github/workflows/release.yml` baut beide Sprachen und hängt alle vier Dateien an ein Release, sobald du einen Tag wie `v1.0.1` pushst (`git tag v1.0.1 && git push origin v1.0.1`). Ohne Kommandozeile geht es auch: auf GitHub unter *Releases → Draft a new release* den Tag `v1.0.1` eintragen und veröffentlichen, die Dateien kommen nach einigen Minuten dazu. Die Versionsnummer kommt aus dem Tag. Für lokale Builds steht sie in `firmware/version.txt`.
 
 **Eigener Fork:** Trage in `firmware/platformio.ini` bei `PAGEFLIPPY_UPDATE_REPO` dein Repository ein, sonst holt der ESP32 seine Updates weiter aus dem Original. Das Repository muss öffentlich sein.
 Getestet mit Bluepad32 5.0.0-beta0 (Commit 80d6314), ESP-IDF 5.5.5 (pioarduino), ESP32-D0WD-V3.
@@ -328,7 +328,7 @@ pio run -e esp32_de        # German only
 
 The full image ends up in `.pio/build/esp32_en/firmware.factory.bin` (or `esp32_de`), the update file next to it as `firmware.bin`.
 
-**Automatic releases:** the workflow `.github/workflows/release.yml` builds both languages and attaches all four files to a release as soon as you push a tag such as `v1.0.1` (`git tag v1.0.1 && git push origin v1.0.1`). The version number comes from the tag. For local builds it is in `firmware/version.txt`.
+**Automatic releases:** the workflow `.github/workflows/release.yml` builds both languages and attaches all four files to a release as soon as you push a tag such as `v1.0.1` (`git tag v1.0.1 && git push origin v1.0.1`). It also works without the command line: on GitHub under *Releases → Draft a new release*, enter the tag `v1.0.1` and publish; the files are added a few minutes later. The version number comes from the tag. For local builds it is in `firmware/version.txt`.
 
 **Your own fork:** set `PAGEFLIPPY_UPDATE_REPO` in `firmware/platformio.ini` to your repository, otherwise the ESP32 keeps pulling updates from the original. The repository must be public.
 Tested with Bluepad32 5.0.0-beta0 (commit 80d6314), ESP-IDF 5.5.5 (pioarduino), ESP32-D0WD-V3.
