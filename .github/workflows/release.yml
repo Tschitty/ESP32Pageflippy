@@ -1,8 +1,10 @@
 # Baut beide Sprachversionen und haengt sie an ein Release.
 # Builds both language versions and attaches them to a release.
 #
-# Release erstellen / create a release:
+# Release erstellen / create a release, entweder / either:
 #   git tag v1.0.1 && git push origin v1.0.1
+# oder auf der GitHub-Seite / or on the GitHub website:
+#   Releases > Draft a new release > Tag "v1.0.1" > Publish release
 # Die Versionsnummer kommt aus dem Tag. Der ESP32 holt sich Updates aus dem neuesten Release.
 # The version number comes from the tag. The ESP32 pulls updates from the latest release.
 name: Release
@@ -69,11 +71,17 @@ jobs:
           name: ESP32Pageflippy
           path: out/*.bin
 
-      - name: Release anlegen / create release
+      # Gibt es das Release schon (auf der GitHub-Seite angelegt), werden die Dateien nur angehaengt.
+      # If the release already exists (created on the GitHub website), the files are just attached.
+      - name: Release anlegen oder ergaenzen / create or extend release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" out/*.bin \
-            --title "ESP32Pageflippy $GITHUB_REF_NAME" \
-            --generate-notes
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/*.bin --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" out/*.bin \
+              --title "ESP32Pageflippy $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
