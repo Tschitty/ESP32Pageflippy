@@ -14,6 +14,7 @@
 #include "pageflippy_lang.h"
 #include "pageflippy_hog.h"
 #include "pageflippy_status.h"
+#include "pageflippy_web.h"
 
 // Zustand pro Controller, liegt in d->platform_data.
 typedef struct {
@@ -29,6 +30,8 @@ typedef struct {
     bool learn_done;
     uint32_t reset_since_ms;
     bool reset_done;
+    // Akku-Warnung schon gespielt
+    bool battery_warned;
 } pageflippy_instance_t;
 
 // Steuerkreuz unten / oben halten + Taste: Taste blaettert ab jetzt zurueck / vor.
@@ -103,35 +106,86 @@ static void update_controller_list(void) {
 // Vibrationsmuster: mehrere kraeftige Stoesse hintereinander (laeuft im Bluetooth-Thread).
 // DualSense: "weak" = rechter Motor, "strong" = linker Motor.
 //
+typedef struct {
+    uint16_t on_ms;     // Dauer des Stosses
+    uint16_t pause_ms;  // Pause danach
+    uint8_t weak;       // rechter Motor
+    uint8_t strong;     // linker Motor
+} rumble_step_t;
+
 #define PULSE_ON_MS 180
-#define PULSE_PERIOD_MS 320
+#define PULSE_PAUSE_MS 140
+#define RUMBLE_MAX_STEPS 8
 static btstack_timer_source_t pulse_timer;
 static int pulse_device = -1;
-static int pulse_left;
-static uint8_t pulse_weak, pulse_strong;
+static rumble_step_t pulse_seq[RUMBLE_MAX_STEPS];
+static int pulse_count, pulse_pos;
 
 static void pulse_step(btstack_timer_source_t* ts) {
     ARG_UNUSED(ts);
     uni_hid_device_t* d = pulse_device >= 0 ? uni_hid_device_get_instance_for_idx(pulse_device) : NULL;
-    if (d == NULL || pulse_left <= 0 || d->report_parser.play_dual_rumble == NULL)
+    if (d == NULL || pulse_pos >= pulse_count || d->report_parser.play_dual_rumble == NULL)
         return;
-    d->report_parser.play_dual_rumble(d, 0, PULSE_ON_MS, pulse_weak, pulse_strong);
-    if (--pulse_left > 0) {
-        btstack_run_loop_set_timer(&pulse_timer, PULSE_PERIOD_MS);
+    const rumble_step_t* st = &pulse_seq[pulse_pos++];
+    d->report_parser.play_dual_rumble(d, 0, st->on_ms, st->weak, st->strong);
+    if (pulse_pos < pulse_count) {
+        btstack_run_loop_set_timer(&pulse_timer, st->on_ms + st->pause_ms);
         btstack_run_loop_add_timer(&pulse_timer);
     }
 }
 
-static void rumble_pulses(uni_hid_device_t* d, int count, uint8_t weak, uint8_t strong) {
+// Spielt eine Folge von Stoessen ab. Eine neue Folge ersetzt eine laufende.
+static void rumble_sequence(uni_hid_device_t* d, const rumble_step_t* seq, int count) {
     if (d->parent != NULL)
         d = d->parent;
+    if (count > RUMBLE_MAX_STEPS)
+        count = RUMBLE_MAX_STEPS;
     btstack_run_loop_remove_timer(&pulse_timer);
     pulse_device = uni_hid_device_get_idx_for_instance(d);
-    pulse_left = count;
-    pulse_weak = weak;
-    pulse_strong = strong;
+    memcpy(pulse_seq, seq, count * sizeof(rumble_step_t));
+    pulse_count = count;
+    pulse_pos = 0;
     btstack_run_loop_set_timer_handler(&pulse_timer, pulse_step);
     pulse_step(&pulse_timer);
+}
+
+// Mehrere gleiche kraeftige Stoesse hintereinander.
+static void rumble_pulses(uni_hid_device_t* d, int count, uint8_t weak, uint8_t strong) {
+    rumble_step_t seq[RUMBLE_MAX_STEPS];
+    if (count > RUMBLE_MAX_STEPS)
+        count = RUMBLE_MAX_STEPS;
+    for (int i = 0; i < count; i++)
+        seq[i] = (rumble_step_t){PULSE_ON_MS, PULSE_PAUSE_MS, weak, strong};
+    rumble_sequence(d, seq, count);
+}
+
+//
+// Akku-Warnung: Sieges-Fanfare, einmal wenn der Akku unter 20 % faellt.
+// Drei schnelle Stoesse, ein langer, zwei mittlere (links, rechts), kurzer und langer Schlussakkord.
+//
+static const rumble_step_t battery_fanfare[] = {
+    {90, 45, 210, 0},   {90, 45, 210, 0},   {90, 45, 210, 0},   {420, 110, 255, 255},
+    {230, 60, 0, 200},  {230, 60, 200, 0},  {160, 60, 255, 255}, {650, 0, 255, 255},
+};
+_Static_assert(sizeof(battery_fanfare) / sizeof(battery_fanfare[0]) <= RUMBLE_MAX_STEPS, "fanfare too long");
+
+// Bluepad32: 0 = unbekannt, 1 = leer, 255 = voll. Der DualSense meldet in 10-%-Schritten (Wert = Stufe * 25 + 1).
+#define BATTERY_LOW_LIMIT 51  // 20 %
+
+static void check_battery(uni_hid_device_t* d, pageflippy_instance_t* ins, uint8_t battery) {
+    if (battery == UNI_CONTROLLER_BATTERY_NOT_AVAILABLE || d->parent != NULL)
+        return;
+    if (battery >= BATTERY_LOW_LIMIT) {
+        ins->battery_warned = false;  // geladen: naechstes Absinken warnt wieder
+        return;
+    }
+    if (ins->battery_warned)
+        return;
+    ins->battery_warned = true;
+    logi(T("pageflippy: Controller-Akku unter 20 %%: %s\n", "pageflippy: controller battery below 20%%: %s\n"), d->name);
+    // Spielt immer, auch wenn die Vibration beim Umblaettern ausgeschaltet ist.
+    if (d->report_parser.play_dual_rumble != NULL)
+        rumble_sequence(d, battery_fanfare, sizeof(battery_fanfare) / sizeof(battery_fanfare[0]));
 }
 
 //
@@ -377,6 +431,38 @@ static void handle_mask(uni_hid_device_t* d, pageflippy_instance_t* ins, uint32_
     handle_buttons(d, next, prev);
 }
 
+// Echte Bluetooth-Maus (nicht das DualSense-Touchpad).
+#define WHEEL_MIN_INTERVAL_MS 150
+static void handle_mouse(uni_hid_device_t* d, pageflippy_instance_t* ins, const uni_mouse_t* ms) {
+    const pageflippy_config_t* cfg = &pageflippy_config;
+    uint32_t mask = 0;
+    if (ms->buttons & UNI_MOUSE_BUTTON_LEFT)
+        mask |= BIT(INPUT_MOUSE_LEFT);
+    if (ms->buttons & UNI_MOUSE_BUTTON_RIGHT)
+        mask |= BIT(INPUT_MOUSE_RIGHT);
+    if (ms->buttons & UNI_MOUSE_BUTTON_MIDDLE)
+        mask |= BIT(INPUT_MOUSE_MIDDLE);
+    if (ms->buttons & UNI_MOUSE_BUTTON_AUX_0)
+        mask |= BIT(INPUT_MOUSE_BACK);
+    if (ms->buttons & UNI_MOUSE_BUTTON_AUX_1)
+        mask |= BIT(INPUT_MOUSE_FORWARD);
+    handle_mask(d, ins, mask, 0);
+
+    // Mausrad: jede Raste blaettert einmal (mit kurzer Sperre, damit schnelles Drehen nicht durchrauscht)
+    if (ms->scroll_wheel != 0) {
+        pageflippy_input_t in = ms->scroll_wheel > 0 ? INPUT_MOUSE_WHEEL_UP : INPUT_MOUSE_WHEEL_DOWN;
+        set_last_input(pageflippy_input_name(in));
+        uint32_t now = btstack_run_loop_get_time_ms();
+        if (now - ins->swipe_last_ms >= WHEEL_MIN_INTERVAL_MS) {
+            ins->swipe_last_ms = now;
+            if (cfg->next_mask & BIT(in))
+                flip(d, true);
+            else if (cfg->prev_mask & BIT(in))
+                flip(d, false);
+        }
+    }
+}
+
 static void pageflippy_on_controller_data(uni_hid_device_t* d, uni_controller_t* ctl) {
     const pageflippy_config_t* cfg = &pageflippy_config;
     pageflippy_instance_t* ins = get_instance(d);
@@ -384,11 +470,16 @@ static void pageflippy_on_controller_data(uni_hid_device_t* d, uni_controller_t*
 
     switch (ctl->klass) {
         case UNI_CONTROLLER_CLASS_GAMEPAD: {
+            check_battery(d, ins, ctl->battery);
             uint32_t mask = pageflippy_gamepad_mask(&ctl->gamepad);
             handle_mask(d, ins, mask, mask);
             break;
         }
-        case UNI_CONTROLLER_CLASS_MOUSE: {
+        case UNI_CONTROLLER_CLASS_MOUSE:
+            if (d->parent == NULL) {
+                handle_mouse(d, ins, &ctl->mouse);
+                break;
+            } else {
             // DualSense-Touchpad: Wischen und Druecken
             const uni_mouse_t* ms = &ctl->mouse;
             uint32_t now = btstack_run_loop_get_time_ms();
@@ -418,7 +509,7 @@ static void pageflippy_on_controller_data(uni_hid_device_t* d, uni_controller_t*
             uint32_t held = d->parent != NULL ? get_instance(d->parent)->last_mask : 0;
             handle_mask(d, ins, mask, held);
             break;
-        }
+            }
         case UNI_CONTROLLER_CLASS_KEYBOARD: {
             // Tastaturen und Fernbedienungen (z. B. Fire TV Remote)
             const uni_keyboard_t* kb = &ctl->keyboard;
@@ -502,6 +593,7 @@ static int cmd_reset_map(int argc, char** argv) {
 }
 
 static void pageflippy_register_console_cmds(void) {
+    pageflippy_web_register_console_cmds();
     static const esp_console_cmd_t reset_map_cmd = {
         .command = "reset_map",
         .help = T("Tastenbelegung auf Standard zuruecksetzen", "Reset button mapping to defaults"),

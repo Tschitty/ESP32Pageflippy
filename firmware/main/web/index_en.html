@@ -81,7 +81,7 @@ kbd{font-family:ui-monospace,monospace;background:var(--bg);border:1px solid var
 
 <section>
 <h2>Wi-Fi</h2>
-<p class="muted">The hotspot <b id="apssid">ESP32Pageflippy</b> is always on (http://192.168.4.1). With a home Wi-Fi the page is also reachable at the IP address shown in the status.</p>
+<p class="muted">Without a home Wi-Fi the hotspot <b id="apssid">ESP32Pageflippy</b> is on (http://192.168.4.1). With a home Wi-Fi the ESP32 connects to it and turns the hotspot off. If the home Wi-Fi is unreachable for 5 minutes, the hotspot turns on. If nobody uses it for 5 minutes, Wi-Fi turns off completely until restart so it doesn't disturb Bluetooth. Hold the BOOT button for 3 seconds = hotspot on until restart.</p>
 <div>Home Wi-Fi: <b id="stanow">…</b></div>
 <div class="row" style="margin-top:12px"><button class="primary" id="scanbtn" onclick="scan()">Search Wi-Fi networks</button><button id="forgetwifi" onclick="joinWifi('')" style="display:none">Disconnect home Wi-Fi</button></div>
 <ul id="nets"></ul>
@@ -99,6 +99,35 @@ kbd{font-family:ui-monospace,monospace;background:var(--bg);border:1px solid var
 </div>
 <div class="row" style="margin-top:16px"><button class="primary" onclick="saveWifi()">Save and restart</button></div>
 </details>
+</section>
+
+<section>
+<h2>Home Assistant (MQTT)</h2>
+<p class="muted">With an MQTT broker (e.g. the Mosquitto add-on) Pageflippy shows up in Home Assistant automatically as a device with the buttons “Next page”, “Previous page” and “Pair controller” plus status sensors. Only works while the home Wi-Fi is connected. Saving restarts the ESP32.</p>
+<div>MQTT: <b id="mqnow">…</b></div>
+<label><input type="checkbox" id="mqen" style="vertical-align:middle"> Enable MQTT</label>
+<div class="grid">
+<div><label for="mquri">Broker (IP address or mqtt://host:1883)</label><input type="text" id="mquri" autocomplete="off" placeholder="192.168.1.10"></div>
+<div><label for="mquser">User</label><input type="text" id="mquser" autocomplete="off"></div>
+<div><label for="mqpass">Password</label><input type="password" id="mqpass" placeholder="unchanged"></div>
+</div>
+<p class="muted">Topic: <kbd id="mqtopic">–</kbd> · commands to <kbd>…/cmd</kbd>: <kbd>next</kbd>, <kbd>prev</kbd>, <kbd>pair</kbd></p>
+<div class="row" style="margin-top:12px"><button class="primary" onclick="saveMqtt()">Save and restart</button></div>
+</section>
+
+<section>
+<h2>Firmware update</h2>
+<p class="muted">An update only replaces the firmware. Mapping, Wi-Fi, MQTT and all Bluetooth pairings are kept. Bluetooth is off during the update, then the ESP32 restarts. Updating from GitHub needs the home Wi-Fi to be connected.</p>
+<div>Installed: <b id="fwver">…</b> <span class="muted" id="fwnew"></span></div>
+<div id="fwstate" style="margin-top:8px"></div>
+<div class="row" style="margin-top:12px"><button onclick="checkFw()">Check for updates</button><button class="primary" onclick="ghUpdate()">Update from GitHub</button><button onclick="$('fwfile').click()">Upload update file …</button><input type="file" id="fwfile" accept=".bin" style="display:none" onchange="uploadFw(this)"></div>
+</section>
+
+<section>
+<h2>Back up settings</h2>
+<p class="muted">Saves mapping, Wi-Fi and MQTT to a file and restores them later, for example after a full reflash or on a second ESP32. Bluetooth pairings are not included. Restoring restarts the ESP32.</p>
+<label><input type="checkbox" id="bkpw" style="vertical-align:middle"> Include passwords (Wi-Fi, hotspot and MQTT are then readable in the file)</label>
+<div class="row" style="margin-top:12px"><button onclick="exportCfg()">Export</button><button onclick="$('bkfile').click()">Import …</button><input type="file" id="bkfile" accept=".json,application/json" style="display:none" onchange="importCfg(this)"></div>
 </section>
 
 <section>
@@ -123,10 +152,12 @@ async function load(){
     tr.querySelector('[data-a=next]').checked=c.next.includes(i);
     tr.querySelector('[data-a=prev]').checked=c.prev.includes(i);
     tb.appendChild(tr)});
+  fw={version:c.version,repo:c.repo,lang:c.lang};$('fwver').textContent=c.version+' ('+c.lang+')';
   $('rumble').checked=c.rumble;$('idle').value=c.idle_off_min;$('touch').checked=c.touch;
   $('nk').value=hex(c.next_keys);$('pk').value=hex(c.prev_keys);
   fillOut($('on'),c.out_next);fillOut($('op'),c.out_prev);
   $('ss').value=c.wifi.sta_ssid;curSsid=c.wifi.sta_ssid;$('forgetwifi').style.display=curSsid?'':'none';$('apssid').textContent=c.wifi.ap_ssid;
+  mqEnabled=c.mqtt.enabled;$('mqen').checked=c.mqtt.enabled;$('mquri').value=c.mqtt.uri;$('mquser').value=c.mqtt.user;$('mqtopic').textContent=c.mqtt.topic||'–';
 }
 async function save(){
   const pick=a=>[...document.querySelectorAll('[data-a='+a+']')].filter(e=>e.checked).map(e=>+e.dataset.i);
@@ -134,7 +165,12 @@ async function save(){
   const r=await fetch('/api/config',{method:'POST',body:JSON.stringify(body)});
   msg(r.ok?'Saved.':'Saving failed.');
 }
-let curSsid='';let cfgRev=null;
+let curSsid='';let mqEnabled=false;
+async function saveMqtt(){
+  await fetch('/api/mqtt',{method:'POST',body:JSON.stringify({enabled:$('mqen').checked,uri:$('mquri').value.trim(),user:$('mquser').value,pass:$('mqpass').value})});
+  alert('Saved. The ESP32 restarts.');
+}
+let cfgRev=null;
 async function saveWifi(){
   const ap=$('ap').value;if(ap&&ap.length<8){alert('The hotspot password needs at least 8 characters.');return}
   await fetch('/api/wifi',{method:'POST',body:JSON.stringify({sta_ssid:$('ss').value,sta_pass:$('sp2').value,ap_pass:ap})});
@@ -163,6 +199,45 @@ async function scan(){
   }catch(e){ul.innerHTML='<li class="muted">Search failed, please try again.</li>'}
   b.disabled=false;b.textContent='Search again';
 }
+let fw={version:'',repo:'',lang:''};let fwBusy=false;
+function fwMsg(t){$('fwstate').textContent=t}
+async function checkFw(){
+  if(!fw.repo){fwMsg('No GitHub repository configured.');return}
+  try{const r=await fetch('https://api.github.com/repos/'+fw.repo+'/releases/latest',{signal:AbortSignal.timeout(8000)});
+    if(r.status===404){$('fwnew').textContent='(no release on GitHub yet)';return}
+    const tag=((await r.json()).tag_name||'').replace(/^v/,'');
+    $('fwnew').textContent=!tag?'':tag===fw.version?'(up to date)':'(new on GitHub: %)'.replace('%',tag);
+  }catch(e){$('fwnew').textContent='(GitHub not reachable, your device needs internet for this)'}
+}
+async function ghUpdate(){
+  if(fwBusy||!confirm('Download and install the latest version from GitHub? Bluetooth is off meanwhile.'))return;
+  const r=await fetch('/api/action?do=ghupdate',{method:'POST'});
+  if(!r.ok)fwMsg('Update failed: '+await r.text());
+}
+function uploadFw(inp){
+  const f=inp.files[0];inp.value='';if(!f||fwBusy)return;
+  if(!confirm('Install %? Bluetooth is off meanwhile.'.replace('%',f.name)))return;
+  fwBusy=true;const x=new XMLHttpRequest();x.open('POST','/api/update');
+  x.upload.onprogress=e=>{if(e.lengthComputable)fwMsg('Uploading: '+Math.round(e.loaded*100/e.total)+' %')};
+  x.onload=()=>{if(x.status===200)fwDone();else{fwBusy=false;fwMsg('Update failed: '+x.responseText)}};
+  x.onerror=()=>{fwBusy=false;fwMsg('Upload interrupted.')};
+  x.send(f);
+}
+function fwDone(){fwBusy=true;fwMsg('Update finished. The ESP32 is restarting, this page reloads shortly.');setTimeout(()=>location.reload(),20000)}
+function fwPoll(u){
+  if(!u||fwBusy)return;
+  if(u.state===1)fwMsg('Update running: '+(u.pct>=0?u.pct+' %':'…'));
+  else if(u.state===2)fwDone();
+  else if(u.state===3)fwMsg('Update failed: '+u.msg+'. Bluetooth stays off until restart.');
+}
+function exportCfg(){location.href='/api/backup'+($('bkpw').checked?'?pw=1':'')}
+async function importCfg(inp){
+  const f=inp.files[0];inp.value='';if(!f)return;
+  let t;try{t=await f.text();if(!JSON.parse(t).pageflippy_backup)throw 0}catch(e){alert('This is not a Pageflippy backup.');return}
+  if(!confirm('Apply the settings from this file? The ESP32 restarts afterwards.'))return;
+  const r=await fetch('/api/backup',{method:'POST',body:t});
+  alert(r.ok?'Applied. The ESP32 is restarting.':'Import failed.');
+}
 async function act(what,reload){
   const r=await fetch('/api/action?do='+what,{method:'POST'});
   if(what==='defaults'&&r.ok){await load();msg('Defaults restored.')}
@@ -174,7 +249,9 @@ async function poll(){
     $('last').textContent=s.last_input||'–';
     $('pair').textContent=s.bt_off?'Bluetooth off (until restart)':s.pairing_left_s?'active, '+s.pairing_left_s+' s left':'off';
     if(cfgRev===null)cfgRev=s.config_rev;else if(s.config_rev!==cfgRev){cfgRev=s.config_rev;load()}
+    fwPoll(s.update);
     $('tv').textContent=s.touch_next?s.touch_next+' / '+s.touch_prev:'–';
+    $('mqnow').textContent=!mqEnabled?'off':s.mqtt?'connected':'not connected';
     $('stanow').textContent=s.sta_ip?curSsid+' (http://'+s.sta_ip+')':(curSsid?curSsid+' (not connected)':'none');
     $('meta').textContent=(s.sta_ip?'Home Wi-Fi: http://'+s.sta_ip+' · ':'')+'Pages turned: '+s.flips+' · free memory: '+Math.round(s.free_heap/1024)+' KB';
   }catch(e){}

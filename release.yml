@@ -1,0 +1,79 @@
+# Baut beide Sprachversionen und haengt sie an ein Release.
+# Builds both language versions and attaches them to a release.
+#
+# Release erstellen / create a release:
+#   git tag v1.0.1 && git push origin v1.0.1
+# Die Versionsnummer kommt aus dem Tag. Der ESP32 holt sich Updates aus dem neuesten Release.
+# The version number comes from the tag. The ESP32 pulls updates from the latest release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:   # Probelauf ohne Release / test build without a release
+
+permissions:
+  contents: write
+
+env:
+  BLUEPAD32_COMMIT: 80d6314
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+
+      - name: PlatformIO installieren / install PlatformIO
+        run: pip install platformio
+
+      - name: Bluepad32 holen und patchen / fetch and patch Bluepad32
+        working-directory: firmware
+        run: |
+          git clone https://github.com/ricardoquesada/bluepad32.git external/bluepad32
+          cd external/bluepad32
+          git checkout "$BLUEPAD32_COMMIT"
+          git submodule update --init --recursive
+          (cd external/btstack && git apply ../patches/*.patch)
+          git apply ../../patches/*.patch
+
+      - name: Version aus dem Tag / version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: firmware
+        run: echo "${GITHUB_REF_NAME#v}" > version.txt
+
+      - name: Bauen / build
+        working-directory: firmware
+        run: pio run
+
+      - name: Dateien benennen / name the files
+        run: |
+          mkdir out
+          cp firmware/.pio/build/esp32_de/firmware.factory.bin out/ESP32Pageflippy_DE.bin
+          cp firmware/.pio/build/esp32_en/firmware.factory.bin out/ESP32Pageflippy_EN.bin
+          cp firmware/.pio/build/esp32_de/firmware.bin         out/ESP32Pageflippy_DE_update.bin
+          cp firmware/.pio/build/esp32_en/firmware.bin         out/ESP32Pageflippy_EN_update.bin
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ESP32Pageflippy
+          path: out/*.bin
+
+      - name: Release anlegen / create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/*.bin \
+            --title "ESP32Pageflippy $GITHUB_REF_NAME" \
+            --generate-notes

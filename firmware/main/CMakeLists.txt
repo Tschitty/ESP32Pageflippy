@@ -7,7 +7,7 @@ foreach(lang de en)
     execute_process(COMMAND ${python} -c "import gzip,sys; open(sys.argv[2],'wb').write(gzip.compress(open(sys.argv[1],'rb').read(), 9, mtime=0))" "${html_src}" "${html_src}.gz")
 endforeach()
 
-idf_component_register(SRCS "main.c" "pageflippy_platform.c" "pageflippy_hog.c" "pageflippy_config.c" "pageflippy_web.c" "pageflippy_touch.c"
+idf_component_register(SRCS "main.c" "pageflippy_platform.c" "pageflippy_hog.c" "pageflippy_config.c" "pageflippy_web.c" "pageflippy_touch.c" "pageflippy_mqtt.c" "pageflippy_update.c"
                     INCLUDE_DIRS "."
                     EMBED_FILES "web/index_de.html.gz" "web/index_en.html.gz"
-                    REQUIRES "bluepad32" "btstack" "esp_wifi" "esp_http_server" "esp_netif" "esp_event" "esp_timer" "nvs_flash" "json" "esp_driver_gpio" "driver")
+                    REQUIRES "bluepad32" "btstack" "esp_wifi" "esp_http_server" "esp_netif" "esp_event" "esp_timer" "nvs_flash" "json" "esp_driver_gpio" "driver" "mqtt" "console" "app_update" "esp_https_ota" "esp_http_client" "mbedtls" "esp_app_format")

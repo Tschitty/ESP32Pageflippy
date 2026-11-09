@@ -10,10 +10,14 @@
 #include <uni.h>
 
 #define NVS_NAMESPACE "pageflippy"
-#define CONFIG_VERSION 2
+#define CONFIG_VERSION 3
 
 // Ab diesem Wert (Bereich -512..511) zaehlt ein Stick als ausgelenkt.
 #define STICK_THRESHOLD 300
+
+// Maus: links / Rad runter / Seitentaste vor = vor, rechts / Rad hoch / Seitentaste zurueck = zurueck
+#define MOUSE_NEXT_DEFAULT (BIT(INPUT_MOUSE_LEFT) | BIT(INPUT_MOUSE_WHEEL_DOWN) | BIT(INPUT_MOUSE_FORWARD))
+#define MOUSE_PREV_DEFAULT (BIT(INPUT_MOUSE_RIGHT) | BIT(INPUT_MOUSE_WHEEL_UP) | BIT(INPUT_MOUSE_BACK))
 
 pageflippy_config_t pageflippy_config;
 static volatile uint32_t config_rev;
@@ -49,6 +53,13 @@ static const char* const input_names[INPUT_COUNT] = {
     [INPUT_TOUCH_SWIPE_RIGHT] = T("Touchpad nach rechts wischen", "Touchpad swipe right"),
     [INPUT_TOUCH_CLICK] = T("Touchpad druecken (linke 3/4)", "Touchpad press (left 3/4)"),
     [INPUT_TOUCH_CLICK_RIGHT] = T("Touchpad druecken (rechtes 1/4)", "Touchpad press (right 1/4)"),
+    [INPUT_MOUSE_LEFT] = T("Maus: linke Taste", "Mouse: left button"),
+    [INPUT_MOUSE_RIGHT] = T("Maus: rechte Taste", "Mouse: right button"),
+    [INPUT_MOUSE_MIDDLE] = T("Maus: mittlere Taste", "Mouse: middle button"),
+    [INPUT_MOUSE_BACK] = T("Maus: Seitentaste zurueck", "Mouse: side button back"),
+    [INPUT_MOUSE_FORWARD] = T("Maus: Seitentaste vor", "Mouse: side button forward"),
+    [INPUT_MOUSE_WHEEL_UP] = T("Maus: Rad hoch", "Mouse: wheel up"),
+    [INPUT_MOUSE_WHEEL_DOWN] = T("Maus: Rad runter", "Mouse: wheel down"),
 };
 
 const char* pageflippy_input_name(pageflippy_input_t input) {
@@ -58,12 +69,9 @@ const char* pageflippy_input_name(pageflippy_input_t input) {
 }
 
 void pageflippy_config_reset_mapping(void) {
-    pageflippy_config.next_mask =
-        BIT(INPUT_DPAD_RIGHT) | BIT(INPUT_R1) | BIT(INPUT_R2) | BIT(INPUT_A) | BIT(INPUT_STICK_L_RIGHT) |
-                                BIT(INPUT_TOUCH_SWIPE_LEFT) | BIT(INPUT_TOUCH_CLICK);
-    pageflippy_config.prev_mask =
-        BIT(INPUT_DPAD_LEFT) | BIT(INPUT_L1) | BIT(INPUT_L2) | BIT(INPUT_X) | BIT(INPUT_STICK_L_LEFT) |
-                                BIT(INPUT_TOUCH_SWIPE_RIGHT) | BIT(INPUT_TOUCH_CLICK_RIGHT);
+    // Controller: nur R1 = vor, L1 = zurueck. Alles andere laesst sich am Controller oder im Web belegen.
+    pageflippy_config.next_mask = BIT(INPUT_R1) | MOUSE_NEXT_DEFAULT;
+    pageflippy_config.prev_mask = BIT(INPUT_L1) | MOUSE_PREV_DEFAULT;
     // Pfeil rechts, Bild ab, Leertaste / Pfeil links, Bild auf
     pageflippy_config.next_keys[0] = 0x4F;
     pageflippy_config.next_keys[1] = 0x4E;
@@ -105,8 +113,13 @@ void pageflippy_config_load(void) {
     pageflippy_config_t stored = pageflippy_config;
     size_t len = sizeof(stored);
     // Aeltere, kuerzere Blobs (ohne idle_off_s) werden ueber die Standardwerte gelegt.
-    if (nvs_get_u8(h, "cfg_ver", &version) == ESP_OK && version == CONFIG_VERSION &&
+    if (nvs_get_u8(h, "cfg_ver", &version) == ESP_OK && (version == 2 || version == CONFIG_VERSION) &&
         nvs_get_blob(h, "cfg", &stored, &len) == ESP_OK && len >= offsetof(pageflippy_config_t, idle_off_s)) {
+        // Version 2 kannte noch keine Maus: Standardbelegung der Maus dazunehmen.
+        if (version == 2) {
+            stored.next_mask |= MOUSE_NEXT_DEFAULT;
+            stored.prev_mask |= MOUSE_PREV_DEFAULT;
+        }
         pageflippy_config = stored;
         logi(T("pageflippy: Belegung aus NVS geladen\n", "pageflippy: mapping loaded from NVS\n"));
     }

@@ -1,5 +1,9 @@
-# Name,   Type, SubType,  Offset,  Size
-nvs,      data, nvs,      0x9000,  0x6000
-phy_init, data, phy,      0xf000,  0x1000
-factory,  app,  factory,  0x10000, 0x300000
-coredump, data, coredump, ,        64K
+# Name,   Type, SubType,  Offset,   Size
+# nvs haelt Belegung, WLAN, MQTT und Bluetooth-Kopplungen. Ein Update schreibt nur in ota_0 / ota_1,
+# deshalb bleiben diese Daten erhalten. Nur das Komplett-Image (ab Adresse 0x0) loescht sie.
+nvs,      data, nvs,      0x9000,   0x6000
+otadata,  data, ota,      0xf000,   0x2000
+phy_init, data, phy,      0x11000,  0x1000
+ota_0,    app,  ota_0,    0x20000,  0x1E0000
+ota_1,    app,  ota_1,    0x200000, 0x1E0000
+coredump, data, coredump, 0x3E0000, 0x10000
